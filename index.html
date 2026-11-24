@@ -19,7 +19,7 @@
   --bg:#f6f6f4; --card:#ffffff; --line:#e6e5e1; --line2:#d6d5d0;
   --text:#0b0b0b; --text2:#52514e; --muted:#8a8984;
   --kcal:#6250d6; --p:#2a78d6; --c:#eb6834; --f:#eda100; --fib:#1baf7a;
-  --accent:#6250d6; --danger:#d0393a; --sheet-bg:rgba(0,0,0,.35);
+  --w:#0f8ea3; --bf:#c8407e; --mm:#6f7d12; --accent:#6250d6; --danger:#d0393a; --sheet-bg:rgba(0,0,0,.35);
 }
 @media (prefers-color-scheme: dark){
   :root{
@@ -27,7 +27,7 @@
     --bg:#121211; --card:#1c1c1b; --line:#2c2c2a; --line2:#3a3a38;
     --text:#f0efec; --text2:#c3c2b7; --muted:#8d8c86;
     --kcal:#9085e9; --p:#3987e5; --c:#d95926; --f:#c98500; --fib:#199e70;
-    --accent:#9085e9; --danger:#e66767; --sheet-bg:rgba(0,0,0,.6);
+    --w:#2bb0c4; --bf:#e06a9e; --mm:#a8b83c; --accent:#9085e9; --danger:#e66767; --sheet-bg:rgba(0,0,0,.6);
   }
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -104,6 +104,11 @@ nav.tabs svg{width:24px;height:24px}
 .chips::-webkit-scrollbar{display:none}
 .chips button{flex:none;padding:6px 12px;border-radius:16px;border:1px solid var(--line2);font-size:14px;color:var(--text2)}
 .chips button.on{border-color:var(--text);color:var(--text);font-weight:600}
+.chipsep{flex:none;width:1px;background:var(--line2);margin:4px 2px}
+.bodycard{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%;margin-top:12px;text-align:left;padding:12px 14px}
+.bodycard b{font-size:19px;letter-spacing:-.01em}
+.bodycard.empty{display:flex;justify-content:space-between;align-items:center}
+.bodycard .delta{font-size:12px}
 
 /* chart */
 .readout{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
@@ -190,25 +195,28 @@ const META = {
   fib:{label:'Fibre', unit:'g', mode:'min'},
 };
 const MEALS = ['Breakfast','Lunch','Dinner','Snacks'];
+const BK = ['w','bf','mm'];
+const BMETA = {w:{label:'Weight', unit:'kg', short:'kg'}, bf:{label:'Body fat', unit:'%', short:'% fat'}, mm:{label:'Muscle', unit:'%', short:'% muscle'}};
 const $ = s => document.querySelector(s);
 
 /* ---------- storage ---------- */
-function defaults(){ return {v:1, targets:{kcal:2200,p:150,c:220,f:70,fib:30}, entries:[], foods:[], deleted:{}, targetsAt:0}; }
+function defaults(){ return {v:1, targets:{kcal:2200,p:150,c:220,f:70,fib:30}, entries:[], foods:[], body:[], deleted:{}, targetsAt:0}; }
 function load(){
   try{
     const d = JSON.parse(localStorage.getItem(KEY));
-    if(d && Array.isArray(d.entries)){ const x = Object.assign(defaults(), d); x.targets = Object.assign(defaults().targets, d.targets); return x; }
+    if(d && Array.isArray(d.entries)){ const x = Object.assign(defaults(), d); if(!Array.isArray(x.body)) x.body = []; x.targets = Object.assign(defaults().targets, d.targets); return x; }
   }catch(e){}
   return defaults();
 }
 let S = load();
 /* change tracking for two-way sync: stamp edited items, tombstone deleted ones */
 function itemSig(x){ const c = Object.assign({}, x); delete c.u; return JSON.stringify(c); }
-function snapOf(st){ const m = {e:{}, f:{}, t: JSON.stringify(st.targets)}; for(const x of st.entries) m.e[x.id] = itemSig(x); for(const x of st.foods) m.f[x.id] = itemSig(x); return m; }
+function snapOf(st){ const m = {e:{}, f:{}, b:{}, t: JSON.stringify(st.targets)}; for(const x of st.entries) m.e[x.id] = itemSig(x); for(const x of st.foods) m.f[x.id] = itemSig(x); for(const x of (st.body||[])) m.b[x.id] = itemSig(x); return m; }
 let SNAP = snapOf(S);
 function stamp(){
   const now = Date.now(); S.deleted = S.deleted || {};
-  for(const [list, key] of [[S.entries,'e'],[S.foods,'f']]){
+  S.body = S.body || [];
+  for(const [list, key] of [[S.entries,'e'],[S.foods,'f'],[S.body,'b']]){
     const seen = {};
     for(const x of list){ seen[x.id] = 1; if(SNAP[key][x.id] !== itemSig(x)) x.u = now; }
     for(const id in SNAP[key]) if(!seen[id]) S.deleted[id] = now;
@@ -247,7 +255,7 @@ function mergeState(L, R){
   const out = Object.assign(defaults(), L);
   const del = Object.assign({}, R.deleted || {});
   for(const id in (L.deleted || {})) del[id] = Math.max(del[id] || 0, L.deleted[id]);
-  for(const k of ['entries','foods']){
+  for(const k of ['entries','foods','body']){
     const m = {};
     for(const x of (R[k] || [])) m[x.id] = x;
     for(const x of (L[k] || [])){ const r = m[x.id]; if(!r || (x.u || 0) >= (r.u || 0)) m[x.id] = x; }
@@ -376,6 +384,7 @@ function renderToday(){
       }).join('')}
     </div>
   </div>`;
+  h += bodyCard();
   if(!es.length){
     const prev = S.entries.filter(e => e.date === addDays(cur,-1));
     h += `<div class="card" style="margin-top:14px;text-align:center">
@@ -409,6 +418,7 @@ $('#app').addEventListener('click', e => {
   else if(a === 'next'){ if(cur < today()){ cur = addDays(cur,1); render(); } }
   else if(a === 'gotoday'){ cur = today(); render(); }
   else if(a === 'add') openPicker(b.dataset.meal);
+  else if(a === 'body') openBody();
   else if(a === 'edit'){ const en = S.entries.find(x => x.id === b.dataset.id); if(en) openForm({mode:'edit', entry:en}); }
   else if(a === 'copyprev'){
     const prev = S.entries.filter(x => x.date === addDays(cur,-1));
@@ -437,6 +447,106 @@ $('#app').addEventListener('click', e => {
 $('#fab').addEventListener('click', () => openPicker(cur === today() ? defaultMeal() : 'Snacks'));
 
 /* ---------- sheet: food picker ---------- */
+/* ---------- body measurements ---------- */
+const bodySorted = () => (S.body || []).slice().sort((a,b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.t||0) - (b.t||0));
+const bodyOn = d => bodySorted().filter(x => x.date === d).pop();
+function bodyBefore(d, k){ const xs = bodySorted().filter(x => x.date < d && x[k] != null); return xs.length ? xs[xs.length-1] : null; }
+function bDelta(v, prev, k){
+  if(v == null || !prev || prev[k] == null) return '';
+  const d = Math.round((v - prev[k])*10)/10;
+  return `<span class="delta">${d > 0 ? '▲' : d < 0 ? '▼' : '→'} ${Math.abs(d)}</span>`;
+}
+function bodyCard(){
+  const b = bodyOn(cur);
+  if(!b) return `<button class="card bodycard empty" data-act="body"><span class="muted">⚖︎ Log weigh-in</span><span class="small muted">weight · body fat · muscle</span></button>`;
+  return `<button class="card bodycard" data-act="body">${BK.map(k => `<div class="bm"><div class="small muted"><span class="dot" style="background:var(--${k})"></span>${BMETA[k].label}</div>
+    <div><b class="num">${b[k] == null ? '–' : fmt1(b[k])}</b><span class="small muted"> ${BMETA[k].unit}</span></div>
+    <div class="small muted num">${bDelta(b[k], bodyBefore(cur, k), k) || '&nbsp;'}</div></div>`).join('')}</button>`;
+}
+function openBody(){
+  const b = bodyOn(cur), last = bodyBefore(cur, 'w');
+  openSheet(`<div class="grab"></div>
+    <div class="phead"><button data-x="cancel">Cancel</button><b>Weigh-in · ${esc(shortDate(cur))}</b><button data-x="save">Save</button></div>
+    <div class="grid5" style="grid-template-columns:repeat(3,1fr)">
+      ${BK.map(k => `<div class="field"><label>${BMETA[k].label} (${BMETA[k].unit})</label><input id="b_${k}" inputmode="decimal" value="${b && b[k] != null ? fmt1(b[k]) : ''}" placeholder="${last && last[k] != null ? fmt1(last[k]) : ''}"></div>`).join('')}
+    </div>
+    <div class="hint">Leave a box blank if your scale doesn't show it.${last ? ` Last weigh-in: ${esc(shortDate(last.date))}.` : ''}</div>
+    ${b ? `<button class="btn danger block" data-x="delete" style="margin-top:14px">Delete weigh-in</button>` : ''}`);
+  setTimeout(() => { const i = $('#b_w'); if(i && !b) i.focus(); }, 250);
+  $('#panel').onclick = e => {
+    const x = e.target.closest('[data-x]'); if(!x) return;
+    const a = x.dataset.x;
+    if(a === 'cancel'){ closeSheet(); return; }
+    if(a === 'delete'){ S.body = S.body.filter(y => y.date !== cur); save(); closeSheet(); render(); toast('Weigh-in deleted'); return; }
+    if(a !== 'save') return;
+    const v = {}; let any = false;
+    for(const k of BK){ const raw = $('#b_'+k).value.trim(); if(raw === ''){ v[k] = null; continue; } const n = num(raw); if(!(n > 0) || (k !== 'w' && n >= 100)){ toast(`Check ${BMETA[k].label.toLowerCase()}`); return; } v[k] = n; any = true; }
+    if(!any){ toast('Enter at least one number'); return; }
+    if(b) Object.assign(b, v); else S.body.push(Object.assign({id: uid(), date: cur, t: Date.now()}, v));
+    S.body = S.body.filter(y => y.date !== cur || y === (b || S.body[S.body.length-1]));
+    save(); closeSheet(); render(); toast('Weigh-in saved');
+  };
+}
+function bodyPeriods(kind){
+  const td = today(), xs = bodySorted(); let out = [];
+  const mk = (key, label, full, from, to) => { const pts = xs.filter(x => x.date >= from && x.date <= to); const avg = {}; for(const k of BK){ const v = pts.filter(x => x[k] != null); avg[k] = v.length ? v.reduce((a,x) => a + x[k], 0)/v.length : null; } return {key, label, full, n: pts.length, avg}; };
+  if(kind === 'day') for(let i = 29; i >= 0; i--){ const d = addDays(td,-i); out.push(mk(d, shortDate(d), fmtDate(d), d, d)); }
+  else if(kind === 'week'){ const w0 = weekStart(td); for(let i = 11; i >= 0; i--){ const w = addDays(w0, -7*i); out.push(mk(w, shortDate(w), `Week of ${shortDate(w)}`, w, addDays(w,6))); } }
+  else { const d0 = parse(td); for(let i = 11; i >= 0; i--){ const m = new Date(d0.getFullYear(), d0.getMonth()-i, 1), m2 = new Date(m.getFullYear(), m.getMonth()+1, 0); out.push(mk(iso(m).slice(0,7), m.toLocaleString('en-GB',{month:'short'}), m.toLocaleString('en-GB',{month:'long', year:'numeric'}), iso(m), iso(m2))); } }
+  const minShow = {day:14, week:6, month:4}[kind], first = out.findIndex(p => p.n);
+  if(first > 0) out = out.slice(Math.min(first, out.length - minShow));
+  return out;
+}
+function lineSVG(ps, k, W){
+  const H = 190, pl = 38, pr = 8, pt = 12, pb = 22, iw = W - pl - pr, ih = H - pt - pb;
+  const vals = ps.map(p => p.avg[k]).filter(v => v != null);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if(!vals.length){ lo = 0; hi = 1; }
+  const pad = Math.max((hi - lo)*0.15, k === 'w' ? 0.5 : 0.5); lo -= pad; hi += pad;
+  const step = niceStep((hi - lo)/4), b0 = Math.floor(lo/step)*step, b1 = Math.ceil(hi/step)*step;
+  const n = ps.length, slot = iw/n, x = i => pl + slot*i + slot/2, y = v => pt + ih - (v - b0)/(b1 - b0)*ih;
+  let g = '', labels = '', hits = '', dots = '', d = '';
+  for(let v = b0; v <= b1 + 1e-9; v += step) g += `<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${pl-6}" y="${y(v)+3}" text-anchor="end">${Math.round(v*10)/10}</text>`;
+  const every = Math.ceil(n / (W < 380 ? 5 : 7));
+  ps.forEach((p, i) => {
+    const v = p.avg[k], active = sel == null ? i === n-1 : sel === i;
+    if(v != null){ d += (d ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v).toFixed(1); dots += `<circle cx="${x(i)}" cy="${y(v)}" r="${active ? 5 : 3.5}" fill="${active ? 'var(--card)' : 'var(--'+k+')'}" stroke="var(--${k})" stroke-width="2.5"/>`; }
+    if(active) g += `<line x1="${x(i)}" x2="${x(i)}" y1="${pt}" y2="${pt+ih}" stroke="var(--text2)" stroke-dasharray="2 3" opacity=".5"/>`;
+    if((n-1-i) % every === 0) labels += `<text x="${i === n-1 ? Math.min(x(i) + slot/2, W - pr) : x(i)}" y="${H-6}" text-anchor="${i === n-1 && slot < 40 ? 'end' : 'middle'}" ${active ? 'style="fill:var(--text);font-weight:600"' : ''}>${esc(p.label)}</text>`;
+    hits += `<rect x="${pl+slot*i}" y="0" width="${slot}" height="${H}" fill="transparent" data-i="${i}"/>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${BMETA[k].label} chart">${g}<path d="${d}" fill="none" stroke="var(--${k})" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>${dots}${labels}${hits}</svg>`;
+}
+function renderBodyTrends(chipsHTML, segHTML){
+  const ps = bodyPeriods(trendPeriod), k = trendMetric, m = BMETA[k];
+  const W = Math.min(560, document.documentElement.clientWidth) - 32 - 28;
+  const i = sel == null ? ps.length - 1 : sel, p = ps[i];
+  const xs = bodySorted().filter(x => x[k] != null);
+  const first = xs[0], last = xs[xs.length-1];
+  const d30 = xs.filter(x => x.date >= addDays(today(), -30));
+  const ch = (a, b) => a && b && a !== b ? (Math.round((b[k] - a[k])*10)/10) : null;
+  const sgn = v => v == null ? '–' : (v > 0 ? '+' : '') + v;
+  let h = `<h1>Trends</h1>${segHTML}${chipsHTML}
+    <div class="card" style="margin-top:12px">
+      <div class="readout"><div><b class="num">${p && p.avg[k] != null ? fmt1(p.avg[k]) : '–'}</b> <span class="muted small">${m.unit}${trendPeriod !== 'day' && p && p.avg[k] != null ? ' avg' : ''}</span></div>
+        <div class="small muted" style="text-align:right">${p ? esc(p.full) : ''}${trendPeriod !== 'day' && p ? `<br>${p.n} weigh-in${p.n === 1 ? '' : 's'}` : ''}</div></div>
+      <div class="chart" id="chart">${xs.length ? lineSVG(ps, k, W) : '<div class="muted" style="text-align:center;padding:60px 0">No weigh-ins yet — log one from Today.</div>'}</div>
+      <div class="stats">
+        <div class="stat"><div class="l">Latest</div><div class="v num">${last ? fmt1(last[k]) : '–'}</div></div>
+        <div class="stat"><div class="l">30-day change</div><div class="v num">${sgn(ch(d30[0], d30[d30.length-1]))}</div></div>
+        <div class="stat"><div class="l">Since start</div><div class="v num">${sgn(ch(first, last))}</div></div>
+      </div>
+    </div>
+    <h2>Weigh-ins</h2>
+    <div class="card tablewrap"><table>
+      <tr><th>Day</th>${BK.map(x => `<th>${BMETA[x].label} (${BMETA[x].unit})</th>`).join('')}</tr>
+      ${bodySorted().reverse().map(x => `<tr data-act="day" data-d="${x.date}" style="cursor:pointer"><td>${esc(fmtDate(x.date))}</td>${BK.map(y => `<td>${x[y] == null ? '–' : fmt1(x[y])}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="4" class="muted" style="text-align:center">No weigh-ins yet.</td></tr>`}
+    </table></div>
+    <p class="hint">Weigh in at the same time each day (morning, after the loo, before food) so the trend is real.</p>`;
+  $('#app').innerHTML = h;
+  const svg = $('#chart svg');
+  if(svg) svg.addEventListener('pointerdown', ev => { const r = ev.target.closest('rect[data-i]'); if(r && +r.dataset.i !== sel){ sel = +r.dataset.i; renderTrends(); } });
+}
 function openSheet(html){ $('#panel').innerHTML = html; $('#sheet').hidden = false; $('#panel').scrollTop = 0; }
 function closeSheet(){ $('#sheet').hidden = true; $('#panel').innerHTML = ''; }
 $('#sheet').addEventListener('click', e => { if(e.target.id === 'sheet') closeSheet(); });
@@ -611,6 +721,9 @@ function pctDelta(a, b){
   return `<span class="delta">${d > 0 ? '▲' : '▼'} ${Math.abs(Math.round(d))}%</span>`;
 }
 function renderTrends(){
+  const segHTML = `<div class="seg">${[['day','Daily'],['week','Weekly'],['month','Monthly']].map(([v,l]) => `<button data-act="period" data-p="${v}" class="${trendPeriod===v?'on':''}">${l}</button>`).join('')}</div>`;
+  const chipsHTML = `<div class="chips">${MK.map(x => `<button data-act="metric" data-k="${x}" class="${x===trendMetric?'on':''}"><span class="dot" style="background:var(--${x})"></span>${META[x].label}</button>`).join('')}<span class="chipsep"></span>${BK.map(x => `<button data-act="metric" data-k="${x}" class="${x===trendMetric?'on':''}"><span class="dot" style="background:var(--${x})"></span>${BMETA[x].label}</button>`).join('')}</div>`;
+  if(BK.includes(trendMetric)) return renderBodyTrends(chipsHTML, segHTML);
   const ps = periods(trendPeriod), k = trendMetric, m = META[k];
   const W = Math.min(560, document.documentElement.clientWidth) - 32 - 28;
   const i = sel == null ? ps.length - 1 : sel, p = ps[i];
@@ -622,9 +735,7 @@ function renderTrends(){
   const spanDays = ps.reduce((a,x) => a + x.span, 0);
   const cmpName = {day:['Today','Yesterday'], week:['This week','Last week'], month:['This month','Last month']}[trendPeriod];
   const a = ps[ps.length-1], b = ps[ps.length-2];
-  let h = `<h1>Trends</h1>
-    <div class="seg">${[['day','Daily'],['week','Weekly'],['month','Monthly']].map(([v,l]) => `<button data-act="period" data-p="${v}" class="${trendPeriod===v?'on':''}">${l}</button>`).join('')}</div>
-    <div class="chips">${MK.map(x => `<button data-act="metric" data-k="${x}" class="${x===k?'on':''}"><span class="dot" style="background:var(--${x})"></span>${META[x].label}</button>`).join('')}</div>
+  let h = `<h1>Trends</h1>${segHTML}${chipsHTML}
     <div class="card" style="margin-top:12px">
       <div class="readout"><div><b class="num">${p.avg[k] == null ? '–' : fmt(p.avg[k])}</b> <span class="muted small">${m.unit}${p.avg[k] == null ? '' : unitWord}</span></div>
         <div class="small muted" style="text-align:right">${esc(p.full)}${trendPeriod !== 'day' ? `<br>${p.n} of ${p.span} days logged` : ''}</div></div>
@@ -727,8 +838,9 @@ async function shareOrDownload(name, text, type){
 function exportJSON(){ shareOrDownload(`macros-backup-${today()}.json`, JSON.stringify(S), 'application/json'); }
 function exportCSV(){
   const dt = dayTotals();
-  const rows = [['date','calories','protein_g','carbs_g','fat_g','fibre_g','items']];
-  for(const d of Object.keys(dt).sort()){ const t = dt[d]; rows.push([d, ...MK.map(k => Math.round(t[k]*10)/10), t.n]); }
+  const rows = [['date','calories','protein_g','carbs_g','fat_g','fibre_g','items','weight_kg','body_fat_pct','muscle_pct']];
+  const days = [...new Set([...Object.keys(dt), ...(S.body||[]).map(x => x.date)])].sort();
+  for(const d of days){ const t = dt[d] || {kcal:'',p:'',c:'',f:'',fib:'',n:0}, b = bodyOn(d) || {}; rows.push([d, ...MK.map(k => t[k] === '' ? '' : Math.round(t[k]*10)/10), t.n, ...BK.map(k => b[k] == null ? '' : b[k])]); }
   shareOrDownload(`macros-daily-${today()}.csv`, rows.map(r => r.join(',')).join('\n'), 'text/csv');
 }
 $('#importFile').addEventListener('change', async e => {
