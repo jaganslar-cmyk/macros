@@ -205,8 +205,57 @@ let S = load();
 function save(){
   try{ localStorage.setItem(KEY, JSON.stringify(S)); }
   catch(e){ toast('Could not save — storage full?'); }
+  scheduleSync();
 }
 if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
+
+/* ---------- cloud sync: pushes data.json to a private GitHub repo ---------- */
+const SYNC_KEY = 'macros.sync';
+function syncDefaults(){ return {repo:'jaganslar-cmyk/macros-data', token:'', last:null, err:null, hash:null}; }
+function loadSync(){ try{ return Object.assign(syncDefaults(), JSON.parse(localStorage.getItem(SYNC_KEY)) || {}); }catch(e){ return syncDefaults(); } }
+let SY = loadSync();
+function saveSync(){ try{ localStorage.setItem(SYNC_KEY, JSON.stringify(SY)); }catch(e){} }
+let syncTimer = null, syncing = false, syncAgain = false;
+function scheduleSync(delay){ if(!SY.token) return; clearTimeout(syncTimer); syncTimer = setTimeout(() => syncNow(false), delay == null ? 3000 : delay); }
+function strHash(str){ let h = 5381; for(let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return String(h >>> 0) + ':' + str.length; }
+function toB64(str){ const bytes = new TextEncoder().encode(str); let bin = ''; for(let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); }
+async function ghErr(r){ let m = ''; try{ m = (await r.json()).message || ''; }catch(e){} return `GitHub ${r.status}${m ? ': ' + m : ''}`; }
+function syncLabel(){
+  if(!SY.token) return 'Not connected.';
+  if(SY.err) return 'Last sync failed: ' + SY.err;
+  if(!SY.last) return 'Connected, not synced yet.';
+  const d = new Date(SY.last);
+  return 'Last synced ' + d.toLocaleDateString(undefined, {day:'numeric', month:'short'}) + ', ' + d.toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit'});
+}
+function showSyncStatus(){ const el = $('#syncStatus'); if(el) el.textContent = syncLabel(); }
+async function syncNow(manual){
+  if(!SY.token || !SY.repo){ if(manual) toast('Add a GitHub token first'); return; }
+  if(!navigator.onLine){ if(manual) toast('Offline — will sync later'); return; }
+  if(syncing){ syncAgain = true; return; }
+  const data = JSON.stringify(S);
+  const h = strHash(data);
+  if(!manual && h === SY.hash && !SY.err) return;   // nothing changed since last push
+  syncing = true; if(manual) toast('Syncing…');
+  const url = `https://api.github.com/repos/${SY.repo}/contents/data.json`;
+  const headers = {Authorization: `Bearer ${SY.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'};
+  try{
+    let sha;
+    const g = await fetch(url + '?ref=main&t=' + Date.now(), {headers, cache: 'no-store'});
+    if(g.status === 200) sha = (await g.json()).sha;
+    else if(g.status !== 404) throw new Error(await ghErr(g));
+    const body = JSON.stringify(Object.assign({syncedAt: new Date().toISOString()}, S), null, 1);
+    const put = await fetch(url, {method: 'PUT', headers, body: JSON.stringify({message: `sync ${today()} · ${S.entries.length} entries`, content: toB64(body), sha})});
+    if(!put.ok) throw new Error(await ghErr(put));
+    SY.last = new Date().toISOString(); SY.err = null; SY.hash = h; saveSync();
+    if(manual) toast('Synced');
+  }catch(e){
+    SY.err = String(e && e.message || e); saveSync();
+    if(manual) toast('Sync failed');
+  }finally{
+    syncing = false; showSyncStatus();
+    if(syncAgain){ syncAgain = false; scheduleSync(1000); }
+  }
+}
 
 /* ---------- helpers ---------- */
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
@@ -333,6 +382,15 @@ $('#app').addEventListener('click', e => {
   else if(a === 'export-csv') exportCSV();
   else if(a === 'import') $('#importFile').click();
   else if(a === 'wipe') wipe();
+  else if(a === 'sync-save'){
+    const repo = $('#syncRepo').value.trim(), tok = $('#syncToken').value.trim();
+    if(!/^[\w.-]+\/[\w.-]+$/.test(repo)){ toast('Repo must look like owner/name'); return; }
+    if(repo !== SY.repo){ SY.hash = null; }
+    SY.repo = repo; if(tok){ SY.token = tok; SY.hash = null; }
+    SY.err = null; saveSync(); renderSettings(); syncNow(true);
+  }
+  else if(a === 'sync-now') syncNow(true);
+  else if(a === 'sync-off'){ if(confirm('Stop syncing and forget the token on this phone?')){ SY = Object.assign(syncDefaults(), {repo: SY.repo}); saveSync(); renderSettings(); } }
   else if(a === 'foods') openPicker(defaultMeal(), true);
 });
 $('#fab').addEventListener('click', () => openPicker(cur === today() ? defaultMeal() : 'Snacks'));
@@ -597,6 +655,17 @@ function renderSettings(){
       <div class="grid2"><button class="btn" data-act="export-json">Export backup</button><button class="btn sec" data-act="import">Restore backup</button></div>
       <button class="btn sec block" data-act="export-csv" style="margin-top:10px">Export daily totals (CSV)</button>
     </div>
+    <h2>Sync</h2>
+    <div class="card">
+      <div class="small muted" style="margin-bottom:10px">Copies all your data to a private GitHub repo automatically after every change and each time you open the app.</div>
+      <label class="small" for="syncRepo">Repo (owner/name)</label>
+      <input id="syncRepo" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(SY.repo)}" style="margin:4px 0 10px">
+      <label class="small" for="syncToken">GitHub token</label>
+      <input id="syncToken" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${SY.token ? 'Saved — paste to replace' : 'github_pat_…'}" style="margin:4px 0 10px">
+      <div class="grid2"><button class="btn" data-act="sync-save">Save</button><button class="btn sec" data-act="sync-now">Sync now</button></div>
+      <div class="hint" id="syncStatus">${esc(syncLabel())}</div>
+      ${SY.token ? '<button class="btn sec block" data-act="sync-off" style="margin-top:10px">Disconnect</button>' : ''}
+    </div>
     <h2>Danger zone</h2>
     <button class="btn danger block" data-act="wipe">Delete all data</button>
     <p class="hint" style="text-align:center;margin-top:24px">Macros · works offline · no account</p>`;
@@ -638,12 +707,14 @@ function wipe(){
 
 /* ---------- boot ---------- */
 document.addEventListener('visibilitychange', () => {
-  if(document.visibilityState === 'visible'){ S = load(); rollDay(); render(); }
+  if(document.visibilityState === 'visible'){ S = load(); rollDay(); render(); scheduleSync(500); }
 });
 let lastDay = today();
 function rollDay(){ const t = today(); if(t !== lastDay){ if(cur === lastDay) cur = t; lastDay = t; return true; } return false; }
 setInterval(() => { if(rollDay()) render(); }, 60000);
 render();
+scheduleSync(800);
+window.addEventListener('online', () => scheduleSync(500));
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
 </body>
