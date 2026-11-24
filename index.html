@@ -193,7 +193,7 @@ const MEALS = ['Breakfast','Lunch','Dinner','Snacks'];
 const $ = s => document.querySelector(s);
 
 /* ---------- storage ---------- */
-function defaults(){ return {v:1, targets:{kcal:2200,p:150,c:220,f:70,fib:30}, entries:[], foods:[]}; }
+function defaults(){ return {v:1, targets:{kcal:2200,p:150,c:220,f:70,fib:30}, entries:[], foods:[], deleted:{}, targetsAt:0}; }
 function load(){
   try{
     const d = JSON.parse(localStorage.getItem(KEY));
@@ -202,7 +202,22 @@ function load(){
   return defaults();
 }
 let S = load();
+/* change tracking for two-way sync: stamp edited items, tombstone deleted ones */
+function itemSig(x){ const c = Object.assign({}, x); delete c.u; return JSON.stringify(c); }
+function snapOf(st){ const m = {e:{}, f:{}, t: JSON.stringify(st.targets)}; for(const x of st.entries) m.e[x.id] = itemSig(x); for(const x of st.foods) m.f[x.id] = itemSig(x); return m; }
+let SNAP = snapOf(S);
+function stamp(){
+  const now = Date.now(); S.deleted = S.deleted || {};
+  for(const [list, key] of [[S.entries,'e'],[S.foods,'f']]){
+    const seen = {};
+    for(const x of list){ seen[x.id] = 1; if(SNAP[key][x.id] !== itemSig(x)) x.u = now; }
+    for(const id in SNAP[key]) if(!seen[id]) S.deleted[id] = now;
+  }
+  if(JSON.stringify(S.targets) !== SNAP.t) S.targetsAt = now;
+  SNAP = snapOf(S);
+}
 function save(){
+  stamp();
   try{ localStorage.setItem(KEY, JSON.stringify(S)); }
   catch(e){ toast('Could not save — storage full?'); }
   scheduleSync();
@@ -228,25 +243,51 @@ function syncLabel(){
   return 'Last synced ' + d.toLocaleDateString(undefined, {day:'numeric', month:'short'}) + ', ' + d.toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit'});
 }
 function showSyncStatus(){ const el = $('#syncStatus'); if(el) el.textContent = syncLabel(); }
+function mergeState(L, R){
+  const out = Object.assign(defaults(), L);
+  const del = Object.assign({}, R.deleted || {});
+  for(const id in (L.deleted || {})) del[id] = Math.max(del[id] || 0, L.deleted[id]);
+  for(const k of ['entries','foods']){
+    const m = {};
+    for(const x of (R[k] || [])) m[x.id] = x;
+    for(const x of (L[k] || [])){ const r = m[x.id]; if(!r || (x.u || 0) >= (r.u || 0)) m[x.id] = x; }
+    out[k] = Object.values(m).filter(x => !(del[x.id] && del[x.id] >= (x.u || 0)));
+  }
+  out.deleted = del;
+  if((R.targetsAt || 0) > (L.targetsAt || 0)){ out.targets = Object.assign(defaults().targets, R.targets); out.targetsAt = R.targetsAt; }
+  return out;
+}
+function fromB64(b){ const bin = atob(b.replace(/\s/g, '')); const u = new Uint8Array(bin.length); for(let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new TextDecoder().decode(u); }
+function bareJSON(st){ const c = Object.assign({}, st); delete c.syncedAt; return JSON.stringify(c); }
 async function syncNow(manual){
   if(!SY.token || !SY.repo){ if(manual) toast('Add a GitHub token first'); return; }
   if(!navigator.onLine){ if(manual) toast('Offline — will sync later'); return; }
   if(syncing){ syncAgain = true; return; }
-  const data = JSON.stringify(S);
-  const h = strHash(data);
-  if(!manual && h === SY.hash && !SY.err) return;   // nothing changed since last push
   syncing = true; if(manual) toast('Syncing…');
   const url = `https://api.github.com/repos/${SY.repo}/contents/data.json`;
   const headers = {Authorization: `Bearer ${SY.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'};
   try{
-    let sha;
-    const g = await fetch(url + '?ref=main&t=' + Date.now(), {headers, cache: 'no-store'});
-    if(g.status === 200) sha = (await g.json()).sha;
-    else if(g.status !== 404) throw new Error(await ghErr(g));
-    const body = JSON.stringify(Object.assign({syncedAt: new Date().toISOString()}, S), null, 1);
-    const put = await fetch(url, {method: 'PUT', headers, body: JSON.stringify({message: `sync ${today()} · ${S.entries.length} entries`, content: toB64(body), sha})});
-    if(!put.ok) throw new Error(await ghErr(put));
-    SY.last = new Date().toISOString(); SY.err = null; SY.hash = h; saveSync();
+    for(let attempt = 0; attempt < 2; attempt++){
+      let sha, remote = null;
+      const g = await fetch(url + '?ref=main&t=' + Date.now(), {headers, cache: 'no-store'});
+      if(g.status === 200){ const j = await g.json(); sha = j.sha; try{ remote = JSON.parse(fromB64(j.content)); }catch(e){ remote = null; } }
+      else if(g.status !== 404) throw new Error(await ghErr(g));
+      if(remote && Array.isArray(remote.entries)){
+        const merged = mergeState(S, remote);
+        if(bareJSON(merged) !== bareJSON(S)){
+          S = merged; SNAP = snapOf(S);
+          try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){}
+          if($('#sheet').hidden && !(document.activeElement && document.activeElement.matches('input,select,textarea'))) render();
+        }
+        if(bareJSON(S) === bareJSON(remote)) break;   // already identical, nothing to push
+      }
+      const body = JSON.stringify(Object.assign({syncedAt: new Date().toISOString()}, S), null, 1);
+      const put = await fetch(url, {method: 'PUT', headers, body: JSON.stringify({message: `sync ${today()} · ${S.entries.length} entries`, content: toB64(body), sha})});
+      if(put.ok) break;
+      if(put.status === 409 && attempt === 0) continue;   // remote moved under us: re-pull and retry
+      throw new Error(await ghErr(put));
+    }
+    SY.last = new Date().toISOString(); SY.err = null; SY.hash = strHash(JSON.stringify(S)); saveSync();
     if(manual) toast('Synced');
   }catch(e){
     SY.err = String(e && e.message || e); saveSync();
@@ -657,7 +698,7 @@ function renderSettings(){
     </div>
     <h2>Sync</h2>
     <div class="card">
-      <div class="small muted" style="margin-bottom:10px">Copies all your data to a private GitHub repo automatically after every change and each time you open the app.</div>
+      <div class="small muted" style="margin-bottom:10px">Two-way sync with a private GitHub repo: pushes your changes and pulls any made elsewhere, after every change and each time you open the app.</div>
       <label class="small" for="syncRepo">Repo (owner/name)</label>
       <input id="syncRepo" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(SY.repo)}" style="margin:4px 0 10px">
       <label class="small" for="syncToken">GitHub token</label>
@@ -707,7 +748,7 @@ function wipe(){
 
 /* ---------- boot ---------- */
 document.addEventListener('visibilitychange', () => {
-  if(document.visibilityState === 'visible'){ S = load(); rollDay(); render(); scheduleSync(500); }
+  if(document.visibilityState === 'visible'){ S = load(); SNAP = snapOf(S); rollDay(); render(); scheduleSync(500); }
 });
 let lastDay = today();
 function rollDay(){ const t = today(); if(t !== lastDay){ if(cur === lastDay) cur = t; lastDay = t; return true; } return false; }
