@@ -371,7 +371,7 @@ function render(){
 $('#tabs').addEventListener('click', e => {
   const b = e.target.closest('button'); if(!b) return;
   if(b.dataset.v === 'today' && view === 'today') cur = today();
-  view = b.dataset.v; sel = null; render(); window.scrollTo(0,0);
+  view = b.dataset.v; sel = null; if(view === 'photos') autoBio = true; render(); window.scrollTo(0,0);
 });
 
 /* ---------- today ---------- */
@@ -472,7 +472,33 @@ $('#fab').addEventListener('click', () => openPicker(cur === today() ? defaultMe
 /* ---------- progress photos (passcode-locked) ---------- */
 const POSES = ['front','side','back','legs'], PLABEL = {front:'Front', side:'Side', back:'Back', legs:'Legs'};
 const LOCK_KEY = 'macros.lock';
-let unlocked = false, photoTarget = null, photoDate = null, showAllDates = false;
+let unlocked = false, photoTarget = null, photoDate = null, showAllDates = false, autoBio = false, bioAvail = false;
+const fromB64Bytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+if(window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable)
+  PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(v => { bioAvail = v; if(view === 'photos' && unlocked) renderPhotos(); }).catch(() => {});
+async function enableBio(){
+  const L = getLock(); if(!L) return;
+  try{
+    const cred = await navigator.credentials.create({publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)), rp: {name: 'Macros'},
+      user: {id: crypto.getRandomValues(new Uint8Array(16)), name: 'Macros photos', displayName: 'Macros photos'},
+      pubKeyCredParams: [{type: 'public-key', alg: -7}, {type: 'public-key', alg: -257}],
+      authenticatorSelection: {authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged'},
+      timeout: 60000, attestation: 'none'}});
+    L.bio = {id: b64u(cred.rawId)}; localStorage.setItem(LOCK_KEY, JSON.stringify(L));
+    toast('Face ID unlock on'); renderPhotos();
+  }catch(e){ toast(e && e.name === 'NotAllowedError' ? 'Cancelled' : 'Face ID not available here'); }
+}
+function disableBio(){ const L = getLock(); if(!L) return; delete L.bio; localStorage.setItem(LOCK_KEY, JSON.stringify(L)); toast('Face ID unlock off'); renderPhotos(); }
+async function bioUnlock(quiet){
+  const L = getLock(); if(!L || !L.bio) return;
+  try{
+    const a = await navigator.credentials.get({publicKey: {challenge: crypto.getRandomValues(new Uint8Array(32)),
+      allowCredentials: [{type: 'public-key', id: fromB64Bytes(L.bio.id), transports: ['internal']}], userVerification: 'required', timeout: 60000}});
+    const uv = new Uint8Array(a.response.authenticatorData)[32] & 0x04;
+    if(b64u(a.rawId) === L.bio.id && uv){ unlocked = true; renderPhotos(); } else toast('Face ID failed — use your passcode');
+  }catch(e){ if(!quiet) toast('Face ID cancelled — use your passcode'); }
+}
 const urlCache = {};
 function getLock(){ try{ return JSON.parse(localStorage.getItem(LOCK_KEY)); }catch(e){ return null; } }
 const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
@@ -550,10 +576,13 @@ function renderPhotos(){
   }
   if(!unlocked){
     $('#app').innerHTML = `<div class="lockbox"><div class="ic">🔒</div><h1 style="margin:0 0 14px">Photos locked</h1>
+      ${L.bio ? `<button class="btn block" data-ph="bio" style="margin-bottom:14px">Unlock with Face ID</button><div class="small muted" style="margin-bottom:6px">or use your passcode</div>` : ''}
       <form id="unlockForm"><input id="pcu" type="password" autocomplete="off" placeholder="Passcode">
-      <button class="btn block" style="margin-top:8px">Unlock</button></form>
+      <button class="btn ${L.bio ? 'sec ' : ''}block" style="margin-top:8px">Unlock</button></form>
       <button class="small muted" data-ph="forgot" style="margin-top:18px;text-decoration:underline">Forgot passcode?</button></div>`;
-    setTimeout(() => { const i = $('#pcu'); if(i) i.focus(); }, 50);
+    if(L.bio && autoBio){ autoBio = false; bioUnlock(true); }
+    else if(!L.bio) setTimeout(() => { const i = $('#pcu'); if(i) i.focus(); }, 50);
+    autoBio = false;
     return;
   }
   const d0 = photoDate || cur, on = photosOn(d0);
@@ -578,6 +607,7 @@ function renderPhotos(){
     }).join('') || `<div class="muted" style="text-align:center;padding:30px 0">No photos yet.</div>`}</div>
     ${dates.length > shown.length ? `<button class="btn sec block" data-ph="more" style="margin-top:10px">Show all ${dates.length} dates</button>` : ''}
     <p class="hint">${SY.token ? (pend ? `${pend} photo${pend === 1 ? '' : 's'} waiting to upload.` : 'All photos backed up to your private repo.') + (SY.perr ? ' Last photo upload failed: ' + esc(SY.perr) : '') : 'Sync is off — photos are only on this phone.'} Photos never go to the public app site.</p>
+    ${bioAvail || getLock().bio ? `<button class="btn sec block" data-ph="${getLock().bio ? 'bioff' : 'bion'}" style="margin-top:6px">${getLock().bio ? 'Turn off Face ID unlock' : 'Use Face ID to unlock'}</button>` : ''}
     <button class="btn danger block" data-ph="resetpass" style="margin-top:6px">Change passcode</button>`;
   $('#app').innerHTML = h;
   $('#phDate').addEventListener('change', e => { photoDate = e.target.value || today(); renderPhotos(); });
@@ -652,6 +682,9 @@ $('#app').addEventListener('click', async e => {
     localStorage.setItem(LOCK_KEY, JSON.stringify(await hashPass(p1))); unlocked = true; renderPhotos(); toast('Passcode set');
   }
   else if(a === 'lock'){ unlocked = false; renderPhotos(); }
+  else if(a === 'bio') bioUnlock(false);
+  else if(a === 'bion') enableBio();
+  else if(a === 'bioff') disableBio();
   else if(a === 'forgot'){
     if(!SY.token){ toast('Connect sync first — the reset needs your GitHub token'); return; }
     const t = prompt('Paste your GitHub token to reset the passcode:');
