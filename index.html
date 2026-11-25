@@ -58,7 +58,7 @@ nav.tabs svg{width:24px;height:24px}
 .lockbox{max-width:320px;margin:60px auto 0;text-align:center}
 .lockbox .ic{font-size:34px;margin-bottom:6px}
 .lockbox input{text-align:center;margin:6px 0;letter-spacing:.2em}
-.slots{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.slots{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .slot{aspect-ratio:3/4;border-radius:12px;border:1.5px dashed var(--line2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--muted);font-size:13px;overflow:hidden;position:relative;background:var(--bg)}
 .slot.has{border:0}
 .slot img,.thumb img{width:100%;height:100%;object-fit:cover;display:block}
@@ -66,7 +66,7 @@ nav.tabs svg{width:24px;height:24px}
 .prow{padding:12px 14px;border-top:1px solid var(--line)}
 .prow:first-child{border-top:0}
 .prow .hd{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
-.thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.thumbs{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
 .thumb{aspect-ratio:3/4;border-radius:10px;overflow:hidden;background:var(--line);position:relative}
 .thumb.none{background:transparent;border:1px dashed var(--line2)}
 .viewer img{width:100%;border-radius:12px;display:block;background:var(--line)}
@@ -470,7 +470,7 @@ $('#fab').addEventListener('click', () => openPicker(cur === today() ? defaultMe
 
 /* ---------- sheet: food picker ---------- */
 /* ---------- progress photos (passcode-locked) ---------- */
-const POSES = ['front','side','back'], PLABEL = {front:'Front', side:'Side', back:'Back'};
+const POSES = ['front','side','back','legs'], PLABEL = {front:'Front', side:'Side', back:'Back', legs:'Legs'};
 const LOCK_KEY = 'macros.lock';
 let unlocked = false, photoTarget = null, photoDate = null, showAllDates = false;
 const urlCache = {};
@@ -568,7 +568,7 @@ function renderPhotos(){
       <div class="slots">${POSES.map(ps => on[ps]
         ? `<button class="slot has" data-ph="view" data-id="${on[ps].id}"><img data-pid="${on[ps].id}" alt=""><span class="lbl">${PLABEL[ps]}</span></button>`
         : `<button class="slot" data-ph="add" data-pose="${ps}"><span style="font-size:22px">+</span>${PLABEL[ps]}</button>`).join('')}</div>
-      <div class="hint">Same spot, same light, same time of day (morning, before food) — or the comparison is useless. Tap a photo to replace or delete it.</div>
+      <div class="hint">Same spot, same light, same time of day (morning, before food) — or the comparison is useless. Shoot full-length with the phone at hip height so your legs aren't shrunk; Legs = quads flexed, front on. Tap a photo to replace or delete it.</div>
     </div>
     <h2>Timeline</h2>
     <div class="card" style="padding:0">${shown.map(d => {
