@@ -55,6 +55,24 @@ nav.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:color-mi
 nav.tabs button{flex:1;padding:8px 0 6px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted)}
 nav.tabs button.on{color:var(--accent)}
 nav.tabs svg{width:24px;height:24px}
+.lockbox{max-width:320px;margin:60px auto 0;text-align:center}
+.lockbox .ic{font-size:34px;margin-bottom:6px}
+.lockbox input{text-align:center;margin:6px 0;letter-spacing:.2em}
+.slots{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.slot{aspect-ratio:3/4;border-radius:12px;border:1.5px dashed var(--line2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--muted);font-size:13px;overflow:hidden;position:relative;background:var(--bg)}
+.slot.has{border:0}
+.slot img,.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.slot .lbl,.thumb .lbl{position:absolute;left:6px;bottom:6px;background:rgba(0,0,0,.55);color:#fff;font-size:11px;padding:2px 7px;border-radius:8px}
+.prow{padding:12px 14px;border-top:1px solid var(--line)}
+.prow:first-child{border-top:0}
+.prow .hd{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.thumb{aspect-ratio:3/4;border-radius:10px;overflow:hidden;background:var(--line);position:relative}
+.thumb.none{background:transparent;border:1px dashed var(--line2)}
+.viewer img{width:100%;border-radius:12px;display:block;background:var(--line)}
+.vpair{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.vpair .cap{font-size:12px;color:var(--muted);text-align:center;margin-top:4px}
+.vnav{display:flex;justify-content:space-between;align-items:center;margin:10px 0}
 
 /* day header */
 .dayhead{display:flex;align-items:center;justify-content:space-between;margin:4px 0 12px}
@@ -177,11 +195,13 @@ th:first-child,td:first-child{text-align:left}
   <button data-v="today"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>Today</button>
   <button data-v="trends"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 19V12M10 19V7M15 19v-5M20 19V4"/></svg>Trends</button>
   <button data-v="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>History</button>
+  <button data-v="photos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.8l1.4-2h4.6l1.4 2h1.8A2.5 2.5 0 0 1 20 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.8" r="3.4"/></svg>Photos</button>
   <button data-v="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Settings</button>
 </nav>
 <div class="sheet" id="sheet" hidden><div class="panel" id="panel"></div></div>
 <div class="toast" id="toast"></div>
 <input type="file" id="importFile" accept="application/json,.json" hidden>
+<input type="file" id="photoFile" accept="image/*" hidden>
 
 <script>
 'use strict';
@@ -200,23 +220,23 @@ const BMETA = {w:{label:'Weight', unit:'kg', short:'kg'}, bf:{label:'Body fat', 
 const $ = s => document.querySelector(s);
 
 /* ---------- storage ---------- */
-function defaults(){ return {v:1, targets:{kcal:2200,p:150,c:220,f:70,fib:30}, entries:[], foods:[], body:[], deleted:{}, targetsAt:0}; }
+function defaults(){ return {v:1, targets:{kcal:2200,p:150,c:220,f:70,fib:30}, entries:[], foods:[], body:[], photos:[], deleted:{}, targetsAt:0}; }
 function load(){
   try{
     const d = JSON.parse(localStorage.getItem(KEY));
-    if(d && Array.isArray(d.entries)){ const x = Object.assign(defaults(), d); if(!Array.isArray(x.body)) x.body = []; x.targets = Object.assign(defaults().targets, d.targets); return x; }
+    if(d && Array.isArray(d.entries)){ const x = Object.assign(defaults(), d); if(!Array.isArray(x.body)) x.body = []; if(!Array.isArray(x.photos)) x.photos = []; x.targets = Object.assign(defaults().targets, d.targets); return x; }
   }catch(e){}
   return defaults();
 }
 let S = load();
 /* change tracking for two-way sync: stamp edited items, tombstone deleted ones */
 function itemSig(x){ const c = Object.assign({}, x); delete c.u; return JSON.stringify(c); }
-function snapOf(st){ const m = {e:{}, f:{}, b:{}, t: JSON.stringify(st.targets)}; for(const x of st.entries) m.e[x.id] = itemSig(x); for(const x of st.foods) m.f[x.id] = itemSig(x); for(const x of (st.body||[])) m.b[x.id] = itemSig(x); return m; }
+function snapOf(st){ const m = {e:{}, f:{}, b:{}, t: JSON.stringify(st.targets)}; for(const x of st.entries) m.e[x.id] = itemSig(x); for(const x of st.foods) m.f[x.id] = itemSig(x); for(const x of (st.body||[])) m.b[x.id] = itemSig(x); m.p = {}; for(const x of (st.photos||[])) m.p[x.id] = itemSig(x); return m; }
 let SNAP = snapOf(S);
 function stamp(){
   const now = Date.now(); S.deleted = S.deleted || {};
-  S.body = S.body || [];
-  for(const [list, key] of [[S.entries,'e'],[S.foods,'f'],[S.body,'b']]){
+  S.body = S.body || []; S.photos = S.photos || [];
+  for(const [list, key] of [[S.entries,'e'],[S.foods,'f'],[S.body,'b'],[S.photos,'p']]){
     const seen = {};
     for(const x of list){ seen[x.id] = 1; if(SNAP[key][x.id] !== itemSig(x)) x.u = now; }
     for(const id in SNAP[key]) if(!seen[id]) S.deleted[id] = now;
@@ -255,7 +275,7 @@ function mergeState(L, R){
   const out = Object.assign(defaults(), L);
   const del = Object.assign({}, R.deleted || {});
   for(const id in (L.deleted || {})) del[id] = Math.max(del[id] || 0, L.deleted[id]);
-  for(const k of ['entries','foods','body']){
+  for(const k of ['entries','foods','body','photos']){
     const m = {};
     for(const x of (R[k] || [])) m[x.id] = x;
     for(const x of (L[k] || [])){ const r = m[x.id]; if(!r || (x.u || 0) >= (r.u || 0)) m[x.id] = x; }
@@ -295,6 +315,7 @@ async function syncNow(manual){
       if(put.status === 409 && attempt === 0) continue;   // remote moved under us: re-pull and retry
       throw new Error(await ghErr(put));
     }
+    try{ await syncPhotos(headers); SY.perr = null; }catch(e){ SY.perr = String(e && e.message || e); }
     SY.last = new Date().toISOString(); SY.err = null; SY.hash = strHash(JSON.stringify(S)); saveSync();
     if(manual) toast('Synced');
   }catch(e){
@@ -344,7 +365,8 @@ let view = 'today', cur = today(), trendMetric = 'kcal', trendPeriod = 'day', se
 function render(){
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === view));
   $('#fab').hidden = view !== 'today';
-  ({today:renderToday, trends:renderTrends, history:renderHistory, settings:renderSettings})[view]();
+  if(view !== 'photos') unlocked = false;
+  ({today:renderToday, trends:renderTrends, history:renderHistory, photos:renderPhotos, settings:renderSettings})[view]();
 }
 $('#tabs').addEventListener('click', e => {
   const b = e.target.closest('button'); if(!b) return;
@@ -447,6 +469,200 @@ $('#app').addEventListener('click', e => {
 $('#fab').addEventListener('click', () => openPicker(cur === today() ? defaultMeal() : 'Snacks'));
 
 /* ---------- sheet: food picker ---------- */
+/* ---------- progress photos (passcode-locked) ---------- */
+const POSES = ['front','side','back'], PLABEL = {front:'Front', side:'Side', back:'Back'};
+const LOCK_KEY = 'macros.lock';
+let unlocked = false, photoTarget = null, photoDate = null, showAllDates = false;
+const urlCache = {};
+function getLock(){ try{ return JSON.parse(localStorage.getItem(LOCK_KEY)); }catch(e){ return null; } }
+const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+async function hashPass(pass, saltB64){
+  const salt = saltB64 ? Uint8Array.from(atob(saltB64), c => c.charCodeAt(0)) : crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({name:'PBKDF2', salt, iterations:150000, hash:'SHA-256'}, key, 256);
+  return {salt: b64u(salt), hash: b64u(bits)};
+}
+const PDB = (() => { let p; return () => p || (p = new Promise((res, rej) => { const r = indexedDB.open('macros-photos', 1); r.onupgradeneeded = () => r.result.createObjectStore('blobs'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); })); })();
+async function idb(mode, fn){ const db = await PDB(); return new Promise((res, rej) => { const tx = db.transaction('blobs', mode), q = fn(tx.objectStore('blobs')); tx.oncomplete = () => res(q && q.result); tx.onerror = () => rej(tx.error); }); }
+const idbGet = k => idb('readonly', st => st.get(k));
+const idbPut = (k, v) => idb('readwrite', st => st.put(v, k));
+const idbDel = k => idb('readwrite', st => st.delete(k));
+const idbKeys = () => idb('readonly', st => st.getAllKeys());
+function shrink(file, maxEdge = 1440){
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const sc = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth*sc); c.height = Math.round(img.naturalHeight*sc);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      c.toBlob(b => b ? res(b) : rej(new Error('encode')), 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('That file could not be read as a photo')); };
+    img.src = url;
+  });
+}
+const blobB64 = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
+function ghHeaders(raw){ return {Authorization: `Bearer ${SY.token}`, Accept: raw ? 'application/vnd.github.raw' : 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}; }
+const contentsURL = path => `https://api.github.com/repos/${SY.repo}/contents/${path}`;
+async function photoURL(ph){
+  if(urlCache[ph.id]) return urlCache[ph.id];
+  let b = await idbGet(ph.id);
+  if(!b && SY.token && navigator.onLine){
+    const r = await fetch(contentsURL(ph.path) + '?ref=main', {headers: ghHeaders(true), cache: 'no-store'});
+    if(r.ok){ b = await r.blob(); b = new Blob([b], {type: 'image/jpeg'}); await idbPut(ph.id, b); SY.up = SY.up || {}; SY.up[ph.id] = 1; saveSync(); }
+  }
+  if(!b) return null;
+  return urlCache[ph.id] = URL.createObjectURL(b);
+}
+async function remoteDelete(path){
+  const g = await fetch(contentsURL(path) + '?ref=main&t=' + Date.now(), {headers: ghHeaders(false), cache: 'no-store'});
+  if(g.status === 404) return true;
+  if(!g.ok) return false;
+  const sha = (await g.json()).sha;
+  const d = await fetch(contentsURL(path), {method: 'DELETE', headers: ghHeaders(false), body: JSON.stringify({message: `delete ${path}`, sha})});
+  return d.ok || d.status === 404;
+}
+async function syncPhotos(){
+  SY.up = SY.up || {}; SY.pdel = SY.pdel || {};
+  const live = new Set((S.photos || []).map(p => p.id));
+  for(const path of Object.keys(SY.pdel)){ if(await remoteDelete(path)) delete SY.pdel[path]; }
+  for(const ph of (S.photos || [])){
+    if(SY.up[ph.id]) continue;
+    const b = await idbGet(ph.id); if(!b) continue;              // taken on another phone: it'll be downloaded when viewed
+    const r = await fetch(contentsURL(ph.path), {method: 'PUT', headers: ghHeaders(false), body: JSON.stringify({message: `photo ${ph.date} ${ph.pose}`, content: await blobB64(b)})});
+    if(r.ok || r.status === 422) SY.up[ph.id] = 1; else throw new Error(await ghErr(r));
+  }
+  for(const k of await idbKeys()) if(!live.has(k)){ await idbDel(k); delete SY.up[k]; if(urlCache[k]){ URL.revokeObjectURL(urlCache[k]); delete urlCache[k]; } }
+  saveSync();
+  if(view === 'photos' && unlocked) renderPhotos();
+}
+function pendingPhotos(){ SY.up = SY.up || {}; return (S.photos || []).filter(p => !SY.up[p.id]).length; }
+function photosOn(d){ const m = {}; for(const p of (S.photos || [])) if(p.date === d && (!m[p.pose] || (p.t||0) > (m[p.pose].t||0))) m[p.pose] = p; return m; }
+function renderPhotos(){
+  const L = getLock();
+  if(!L){
+    $('#app').innerHTML = `<div class="lockbox"><div class="ic">🔒</div><h1 style="margin:0 0 6px">Set a passcode</h1>
+      <p class="small muted">Progress photos stay behind this passcode. It locks again whenever you leave this tab or close the app.</p>
+      <input id="pc1" type="password" autocomplete="off" placeholder="Passcode (4+ characters)">
+      <input id="pc2" type="password" autocomplete="off" placeholder="Repeat passcode">
+      <button class="btn block" data-ph="setpass" style="margin-top:8px">Set passcode</button></div>`;
+    return;
+  }
+  if(!unlocked){
+    $('#app').innerHTML = `<div class="lockbox"><div class="ic">🔒</div><h1 style="margin:0 0 14px">Photos locked</h1>
+      <form id="unlockForm"><input id="pcu" type="password" autocomplete="off" placeholder="Passcode">
+      <button class="btn block" style="margin-top:8px">Unlock</button></form>
+      <button class="small muted" data-ph="forgot" style="margin-top:18px;text-decoration:underline">Forgot passcode?</button></div>`;
+    setTimeout(() => { const i = $('#pcu'); if(i) i.focus(); }, 50);
+    return;
+  }
+  const d0 = photoDate || cur, on = photosOn(d0);
+  const dates = [...new Set((S.photos || []).map(p => p.date))].sort().reverse();
+  const shown = showAllDates ? dates : dates.slice(0, 12);
+  const pend = pendingPhotos();
+  let h = `<div style="display:flex;align-items:baseline;justify-content:space-between"><h1>Progress</h1><button class="small muted" data-ph="lock">🔒 Lock</button></div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px">
+        <b>Add photos</b><input type="date" id="phDate" value="${d0}" max="${today()}" style="width:auto;padding:6px 8px">
+      </div>
+      <div class="slots">${POSES.map(ps => on[ps]
+        ? `<button class="slot has" data-ph="view" data-id="${on[ps].id}"><img data-pid="${on[ps].id}" alt=""><span class="lbl">${PLABEL[ps]}</span></button>`
+        : `<button class="slot" data-ph="add" data-pose="${ps}"><span style="font-size:22px">+</span>${PLABEL[ps]}</button>`).join('')}</div>
+      <div class="hint">Same spot, same light, same time of day (morning, before food) — or the comparison is useless. Tap a photo to replace or delete it.</div>
+    </div>
+    <h2>Timeline</h2>
+    <div class="card" style="padding:0">${shown.map(d => {
+      const m = photosOn(d), b = bodyOn(d);
+      return `<div class="prow"><div class="hd"><b>${esc(fmtDate(d))}</b><span class="small muted num">${b && b.w != null ? fmt1(b.w) + ' kg' : ''}${b && b.bf != null ? ' · ' + fmt1(b.bf) + '% fat' : ''}</span></div>
+        <div class="thumbs">${POSES.map(ps => m[ps] ? `<button class="thumb" data-ph="view" data-id="${m[ps].id}"><img data-pid="${m[ps].id}" alt=""><span class="lbl">${PLABEL[ps]}</span></button>` : `<div class="thumb none"></div>`).join('')}</div></div>`;
+    }).join('') || `<div class="muted" style="text-align:center;padding:30px 0">No photos yet.</div>`}</div>
+    ${dates.length > shown.length ? `<button class="btn sec block" data-ph="more" style="margin-top:10px">Show all ${dates.length} dates</button>` : ''}
+    <p class="hint">${SY.token ? (pend ? `${pend} photo${pend === 1 ? '' : 's'} waiting to upload.` : 'All photos backed up to your private repo.') + (SY.perr ? ' Last photo upload failed: ' + esc(SY.perr) : '') : 'Sync is off — photos are only on this phone.'} Photos never go to the public app site.</p>
+    <button class="btn danger block" data-ph="resetpass" style="margin-top:6px">Change passcode</button>`;
+  $('#app').innerHTML = h;
+  $('#phDate').addEventListener('change', e => { photoDate = e.target.value || today(); renderPhotos(); });
+  fillImgs();
+}
+async function fillImgs(){
+  for(const img of document.querySelectorAll('img[data-pid]')){
+    const ph = (S.photos || []).find(p => p.id === img.dataset.pid); if(!ph) continue;
+    try{ const u = await photoURL(ph); if(u && img.isConnected) img.src = u; }catch(e){}
+  }
+}
+function openViewer(id, cmp){
+  const ph = (S.photos || []).find(p => p.id === id); if(!ph) return;
+  const same = (S.photos || []).filter(p => p.pose === ph.pose).sort((a,b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const i = same.findIndex(p => p.id === id), first = same[0];
+  const b = bodyOn(ph.date), bf = bodyOn(first.date);
+  const cap = (p, bb) => `${esc(fmtDate(p.date))}${bb && bb.w != null ? ' · ' + fmt1(bb.w) + ' kg' : ''}`;
+  openSheet(`<div class="grab"></div>
+    <div class="phead"><button data-v="close">Close</button><b>${PLABEL[ph.pose]}</b><button data-v="replace">Replace</button></div>
+    <div class="viewer">${cmp && first.id !== ph.id
+      ? `<div class="vpair"><div><img data-pid="${first.id}" alt=""><div class="cap">${cap(first, bf)}</div></div><div><img data-pid="${ph.id}" alt=""><div class="cap">${cap(ph, b)}</div></div></div>`
+      : `<img data-pid="${ph.id}" alt=""><div class="small muted" style="text-align:center;margin-top:6px">${cap(ph, b)}</div>`}</div>
+    <div class="vnav"><button class="btn sec" data-v="prev" ${i <= 0 ? 'disabled' : ''}>‹ Older</button>
+      ${same.length > 1 && i > 0 ? `<button class="btn sec" data-v="cmp">${cmp ? 'Single' : 'vs first'}</button>` : ''}
+      <button class="btn sec" data-v="next" ${i >= same.length-1 ? 'disabled' : ''}>Newer ›</button></div>
+    <button class="btn danger block" data-v="delete">Delete photo</button>`);
+  fillImgs();
+  $('#panel').onclick = e => {
+    const x = e.target.closest('[data-v]'); if(!x) return;
+    const a = x.dataset.v;
+    if(a === 'close') closeSheet();
+    else if(a === 'prev' && i > 0) openViewer(same[i-1].id, cmp);
+    else if(a === 'next' && i < same.length-1) openViewer(same[i+1].id, cmp);
+    else if(a === 'cmp') openViewer(id, !cmp);
+    else if(a === 'replace'){ photoTarget = {date: ph.date, pose: ph.pose}; closeSheet(); $('#photoFile').click(); }
+    else if(a === 'delete'){ if(!confirm('Delete this photo from this phone and your repo?')) return; deletePhoto(ph); closeSheet(); renderPhotos(); toast('Photo deleted'); }
+  };
+}
+function deletePhoto(ph){
+  S.photos = S.photos.filter(p => p.id !== ph.id);
+  SY.pdel = SY.pdel || {}; if(SY.up && SY.up[ph.id]) SY.pdel[ph.path] = 1; if(SY.up) delete SY.up[ph.id]; saveSync();
+  idbDel(ph.id).catch(() => {}); if(urlCache[ph.id]){ URL.revokeObjectURL(urlCache[ph.id]); delete urlCache[ph.id]; }
+  save();
+}
+$('#photoFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if(!f || !photoTarget) return;
+  try{
+    toast('Saving photo…');
+    const blob = await shrink(f), id = uid(), {date, pose} = photoTarget;
+    const old = photosOn(date)[pose];
+    await idbPut(id, blob);
+    if(old) deletePhoto(old);
+    S.photos.push({id, date, pose, t: Date.now(), path: `photos/${date}-${pose}-${id}.jpg`});
+    save(); renderPhotos(); toast(`${PLABEL[pose]} photo saved`);
+  }catch(err){ toast(String(err && err.message || 'Could not save photo')); }
+  photoTarget = null;
+});
+$('#app').addEventListener('submit', async e => {
+  if(e.target.id !== 'unlockForm') return;
+  e.preventDefault();
+  const L = getLock(), v = $('#pcu').value;
+  const h = await hashPass(v, L.salt);
+  if(h.hash === L.hash){ unlocked = true; renderPhotos(); } else { $('#pcu').value = ''; toast('Wrong passcode'); }
+});
+$('#app').addEventListener('click', async e => {
+  const b = e.target.closest('[data-ph]'); if(!b) return;
+  const a = b.dataset.ph;
+  if(a === 'setpass'){
+    const p1 = $('#pc1').value, p2 = $('#pc2').value;
+    if(p1.length < 4){ toast('Use at least 4 characters'); return; }
+    if(p1 !== p2){ toast("Passcodes don't match"); return; }
+    localStorage.setItem(LOCK_KEY, JSON.stringify(await hashPass(p1))); unlocked = true; renderPhotos(); toast('Passcode set');
+  }
+  else if(a === 'lock'){ unlocked = false; renderPhotos(); }
+  else if(a === 'forgot'){
+    if(!SY.token){ toast('Connect sync first — the reset needs your GitHub token'); return; }
+    const t = prompt('Paste your GitHub token to reset the passcode:');
+    if(t && t.trim() === SY.token){ localStorage.removeItem(LOCK_KEY); renderPhotos(); } else if(t != null) toast("Token doesn't match");
+  }
+  else if(a === 'resetpass'){ if(confirm('Set a new passcode?')){ localStorage.removeItem(LOCK_KEY); unlocked = false; renderPhotos(); } }
+  else if(a === 'add'){ photoTarget = {date: photoDate || cur, pose: b.dataset.pose}; $('#photoFile').click(); }
+  else if(a === 'view') openViewer(b.dataset.id, false);
+  else if(a === 'more'){ showAllDates = true; renderPhotos(); }
+});
+
 /* ---------- body measurements ---------- */
 const bodySorted = () => (S.body || []).slice().sort((a,b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.t||0) - (b.t||0));
 const bodyOn = d => bodySorted().filter(x => x.date === d).pop();
@@ -860,6 +1076,7 @@ function wipe(){
 
 /* ---------- boot ---------- */
 document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'hidden'){ unlocked = false; if(view === 'photos'){ closeSheet(); $('#app').innerHTML = ''; } }
   if(document.visibilityState === 'visible'){ S = load(); SNAP = snapOf(S); rollDay(); render(); scheduleSync(500); }
 });
 let lastDay = today();
