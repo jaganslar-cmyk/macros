@@ -214,7 +214,8 @@ const META = {
   f:{label:'Fat', unit:'g', mode:'band'},
   fib:{label:'Fibre', unit:'g', mode:'min'},
 };
-const MEALS = ['Breakfast','Lunch','Dinner','Snacks'];
+const MEALS = ['Breakfast','Lunch','Pre-workout','Post-workout','Dinner'];
+const mealsFor = es => MEALS.concat([...new Set(es.map(e => e.meal || 'Snacks'))].filter(m => !MEALS.includes(m)));   // keeps old 'Snacks' entries visible
 const BK = ['w','bf','mm'];
 const BMETA = {w:{label:'Weight', unit:'kg', short:'kg'}, bf:{label:'Body fat', unit:'%', short:'% fat'}, mm:{label:'Muscle', unit:'%', short:'% muscle'}};
 const $ = s => document.querySelector(s);
@@ -355,7 +356,13 @@ function onTarget(k, v){
   const t = S.targets[k]; if(!t) return false;
   return META[k].mode === 'min' ? v >= t : Math.abs(v - t) <= t*0.1;
 }
-function defaultMeal(){ const h = new Date().getHours(); return h < 11 ? 'Breakfast' : h < 16 ? 'Lunch' : h < 18 ? 'Snacks' : 'Dinner'; }
+function defaultMeal(){
+  const h = new Date().getHours();
+  if(h < 11) return 'Breakfast';
+  if(h < 15) return 'Lunch';
+  if(h >= 21) return 'Dinner';
+  return S.entries.some(e => e.date === today() && e.meal === 'Pre-workout') ? 'Post-workout' : 'Pre-workout';
+}
 let toastT;
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove('show'), 1800); }
 
@@ -414,7 +421,7 @@ function renderToday(){
       ${prev.length ? `<button class="btn sec" data-act="copyprev">Copy previous day (${prev.length} items)</button>` : ''}
     </div>`;
   }
-  for(const m of MEALS){
+  for(const m of mealsFor(es)){
     const me = es.filter(e => (e.meal || 'Snacks') === m).sort((a,b) => (a.t||0) - (b.t||0));
     if(!me.length && es.length) { h += `<div class="meal"><div class="mh"><b>${m}</b><span class="sp"></span><button class="add" data-act="add" data-meal="${m}" aria-label="Add to ${m}">+</button></div></div>`; continue; }
     if(!me.length) continue;
@@ -466,7 +473,7 @@ $('#app').addEventListener('click', e => {
   else if(a === 'sync-off'){ if(confirm('Stop syncing and forget the token on this phone?')){ SY = Object.assign(syncDefaults(), {repo: SY.repo}); saveSync(); renderSettings(); } }
   else if(a === 'foods') openPicker(defaultMeal(), true);
 });
-$('#fab').addEventListener('click', () => openPicker(cur === today() ? defaultMeal() : 'Snacks'));
+$('#fab').addEventListener('click', () => openPicker(cur === today() ? defaultMeal() : 'Lunch'));
 
 /* ---------- sheet: food picker ---------- */
 /* ---------- progress photos (passcode-locked) ---------- */
@@ -838,7 +845,7 @@ function openForm(o){
     <div class="field"><label>Name</label><input id="fName" value="${esc(src.name||'')}" placeholder="e.g. Greek yogurt" autocomplete="off"></div>
     <div class="grid2">
       <div class="field"><label>Serving</label><input id="fServ" value="${esc(src.serving||'')}" placeholder="e.g. 100 g"></div>
-      ${isFood ? '' : `<div class="field"><label>Meal</label><select id="fMeal">${MEALS.map(m => `<option ${m===meal?'selected':''}>${m}</option>`).join('')}</select></div>`}
+      ${isFood ? '' : `<div class="field"><label>Meal</label><select id="fMeal">${(MEALS.includes(meal) ? MEALS : MEALS.concat(meal)).map(m => `<option ${m===meal?'selected':''}>${m}</option>`).join('')}</select></div>`}
     </div>
     ${isFood ? '' : `<div class="field"><label>Servings</label><div class="stepper">
       <button data-x="minus">−</button><input id="fQty" inputmode="decimal" value="${fmt1(num(src.qty)||1)}"><button data-x="plus">+</button></div></div>`}
